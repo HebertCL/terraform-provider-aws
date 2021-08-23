@@ -66,6 +66,10 @@ func resourceAwsApiGatewayV2DomainName() *schema.Resource {
 								apigatewayv2.EndpointTypeRegional,
 							}, true),
 						},
+						"ownership_verification_certificate_arn": {
+							Type:         schema.TypeString,
+							ValidateFunc: validateArn,
+						},
 						"hosted_zone_id": {
 							Type:     schema.TypeString,
 							Computed: true,

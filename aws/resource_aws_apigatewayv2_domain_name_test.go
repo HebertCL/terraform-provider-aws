@@ -361,6 +361,47 @@ func TestAccAWSAPIGatewayV2DomainName_MutualTlsAuthentication(t *testing.T) {
 	})
 }
 
+func TestAccAWSAPIGatewayV2DomainName_OwnershipVerificationValidateArn(t *testing.T) {
+	var v apigatewayv2.GetDomainNameOutput
+	resourceName := "aws_apigatewayv2_domain_name.test"
+	certResourceName := "aws_acm_certificate.test.0"
+	privateCertResourceName := "aws_acm_certificate.private_test.0"
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	domainName := fmt.Sprintf("%s.example.com", rName)
+	certificateAuthorityArn := "arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, apigatewayv2.EndpointsID),
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckAWSAPIGatewayV2DomainNameDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAWSAPIGatewayV2DomainNameConfig_ownershipVerificationCertificateArn(domainName, certificateAuthorityArn, rName, rName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckAWSAPIGatewayV2DomainNameExists(resourceName, &v),
+					testAccMatchResourceAttrRegionalARNNoAccount(resourceName, "arn", "apigateway", regexp.MustCompile(`/domainnames/.+`)),
+					resource.TestCheckResourceAttr(resourceName, "domain_name", domainName),
+					resource.TestCheckResourceAttr(resourceName, "domain_name_configuration.#", "1"),
+					resource.TestCheckResourceAttrPair(resourceName, "domain_name_configuration.0.certificate_arn", privateCertResourceName, "arn"),
+					resource.TestCheckResourceAttr(resourceName, "domain_name_configuration.0.endpoint_type", "REGIONAL"),
+					resource.TestCheckResourceAttrPair(resourceName, "domain_name_configuration.0.ownership_verification_certificate_arn", certResourceName, "arn"),
+					resource.TestCheckResourceAttrSet(resourceName, "domain_name_configuration.0.hosted_zone_id"),
+					resource.TestCheckResourceAttr(resourceName, "domain_name_configuration.0.security_policy", "TLS_1_2"),
+					resource.TestCheckResourceAttrSet(resourceName, "domain_name_configuration.0.target_domain_name"),
+					resource.TestCheckResourceAttr(resourceName, "mutual_tls_authentication.#", "0"),
+					resource.TestCheckResourceAttr(resourceName, "tags.%", "0"),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 func testAccCheckAWSAPIGatewayV2DomainNameDestroy(s *terraform.State) error {
 	conn := testAccProvider.Meta().(*AWSClient).apigatewayv2conn
 
@@ -471,6 +512,32 @@ resource "aws_acm_certificate_validation" "test" {
   validation_record_fqdns = [aws_route53_record.test.fqdn]
 }
 `, rootDomain, domain)
+}
+
+func testAccAWSAPIGatewayV2DomainNameConfigPrivateCerts(domain string, caArn string) string {
+	return fmt.Sprintf(`
+resource "aws_acm_certificate" "private_test" {
+	domain_name       = %[1]q
+	certificate_authority_arn = %[2]q
+}
+	`, domain, caArn)
+}
+
+func testAccAWSAPIGatewayV2DomainNameConfig_ownershipVerificationCertificateArn(domain, caArn, cert string, privateCert string) string {
+	return composeConfig(
+		testAccAWSAPIGatewayV2DomainNameConfigPrivateCerts(domain, caArn),
+		fmt.Sprintf(`
+resource "aws_apigatewayv2_domain_name" "test" {
+	domain_name = "%[1]s.example.com"
+
+	domain_name_configuration {
+		certificate_arn 												= aws_acm_certificate.private_test[%[4]d].arn
+		endpoint_type   												= "REGIONAL"
+		ownership_verification_certificate_arn	= aws_acm_certificate.test[%[3]d].arn
+		security_policy 												= "TLS_1_2"
+	}
+}
+		`, cert, privateCert))
 }
 
 func testAccAWSAPIGatewayV2DomainNameConfig_basic(rName, certificate, key string, count, index int) string {
