@@ -56,6 +56,62 @@ resource "aws_route53_record" "example" {
 }
 ```
 
+### Private CA Domain Name Configuration
+
+```terraform
+data "aws_acmpca_certificate_authority" "example" {
+  arn = "arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012"
+}
+
+resource "aws_acm_certificate" "private" {
+  domain_name               = "example.com"
+  certificate_authority_arn = data.aws_acmpca_certificate_authority.example.id
+}
+
+resource "aws_acm_certificate" "cert" {
+  domain_name       = "example.com"
+  validation_method = "DNS"
+}
+
+data "aws_route53_zone" "example" {
+  name         = "example.com"
+  private_zone = false
+}
+
+resource "aws_route53_record" "example" {
+  for_each = {
+    for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.example.zone_id
+}
+
+resource "aws_acm_certificate_validation" "example" {
+  certificate_arn         = aws_acm_certificate.cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.example : record.fqdn]
+}
+
+resource "aws_apigatewayv2_domain_name" "example" {
+  domain_name = "http-api.example.com"
+
+  domain_name_configuration {
+    certificate_arn                         = aws_acm_certificate.private.arn
+    ownership_verification_certificate_arn  = aws_acm_certificate.cert.arn
+    endpoint_type                           = "REGIONAL"
+    security_policy                         = "TLS_1_2"
+  }
+}
+```
+
 ## Argument Reference
 
 The following arguments are supported:
@@ -71,6 +127,7 @@ The `domain_name_configuration` object supports the following:
 Use the [`aws_acm_certificate`](/docs/providers/aws/r/acm_certificate.html) resource to configure an ACM certificate.
 * `endpoint_type` - (Required) The endpoint type. Valid values: `REGIONAL`.
 * `security_policy` - (Required) The Transport Layer Security (TLS) version of the [security policy](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html) for the domain name. Valid values: `TLS_1_2`.
+* `ownership_verification_certificate_arn` - (Optional) The ARN of the public certificate issued by ACM to validate ownership of your custom domain. Only required when configuring mutual TLS and using an ACM imported or private CA certificate ARN as the RegionalCertificateArn.
 * `hosted_zone_id` - (Computed) The Amazon Route 53 Hosted Zone ID of the endpoint.
 * `target_domain_name` - (Computed) The target domain name.
 
